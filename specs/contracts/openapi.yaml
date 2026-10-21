@@ -1,0 +1,819 @@
+openapi: 3.0.3
+info:
+  title: API de Guías de Remisión Electrónica (GRE) — SUNAT Perú
+  version: 1.0.0
+  description: |
+    API REST para emitir, validar y enviar Guías de Remisión Electrónicas (GRE) a la SUNAT,
+    conforme a la R.S. 123-2022-SUNAT (Anexo N.° 14 — estándar UBL 2.1).
+
+    **Modelo de uso.** El cliente envía una representación JSON del comprobante
+    (ver [schema.json](schema.json), JSON Schema 2020-12). El servicio se encarga de:
+    1. validar el payload contra las reglas de SUNAT y los catálogos vigentes,
+    2. generar el XML UBL 2.1 (`DespatchAdvice`) y firmarlo digitalmente (XMLDSig),
+    3. empaquetarlo en el ZIP con la nomenclatura oficial,
+    4. enviarlo al Web Service de SUNAT y persistir el ticket y el CDR.
+
+    **Identidad multi-RUC.** El RUC emisor se toma siempre del token JWT (`claim ruc`),
+    nunca del cuerpo de la petición. Un RUC no habilitado en el token produce
+    `403 RUC_NO_AUTORIZADO`.
+
+    **Idempotencia.** Las operaciones de emisión aceptan la cabecera `Idempotency-Key`.
+    Repetir la misma clave con el mismo cuerpo devuelve la GRE ya creada (`200`);
+    repetirla con un cuerpo distinto devuelve `409 IDEMPOTENCIA_CONFLICTO`.
+  contact:
+    name: Equipo de la plataforma GRE
+    email: soporte@examen.local
+  license:
+    name: Propietario
+servers:
+  - url: https://api.gre.examen.local
+    description: Producción
+  - url: https://api-test.gre.examen.local
+    description: Homologación SUNAT
+tags:
+  - name: GRE
+    description: Emisión y consulta de guías de remisión electrónicas
+  - name: Envíos
+    description: Interacción con el Web Service de SUNAT y su CDR
+  - name: Catálogos
+    description: Datos de referencia SUNAT vigentes
+  - name: Series
+    description: Series de numeración habilitadas por RUC
+security:
+  - bearerAuth: []
+paths:
+  /api/v1/guias:
+    post:
+      tags: [GRE]
+      operationId: emitirGuia
+      summary: Emite una GRE (remitente o transportista) y devuelve el XML generado
+      description: |
+        Genera el XML UBL 2.1, lo firma, lo empaqueta y **no lo envía** a SUNAT
+        (el envío es una operación separada, controlable y reintentable).
+        La numeración se reserva dentro de la misma transacción que persiste el documento.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SolicitudEmision'
+            examples:
+              greRemitenteVenta:
+                summary: GRE Remitente, motivo 01 (venta), transporte privado
+                value:
+                  tipoDocumento: "09"
+                  identificador:
+                    rucEmisor: "20100000000"
+                    fechaEmision: "2026-10-21"
+                    horaEmision: "10:15:30"
+                  remitente:
+                    tipoDocumentoIdentidad: "6"
+                    numeroDocumento: "20100000000"
+                    nombre: "COMERCIAL ANDINA S.A.C."
+                  destinatario:
+                    tipoDocumentoIdentidad: "6"
+                    numeroDocumento: "20111111111"
+                    nombre: "DISTRIBUIDORA DEL SUR E.I.R.L."
+                  envio:
+                    motivo: "01"
+                    modalidad: "02"
+                    fechaInicioTraslado: "2026-10-21"
+                    pesoBruto:
+                      valor: 1250.500
+                      unidad: "KGM"
+                    vehiculos:
+                      - placa: "ABC123"
+                    conductores:
+                      - tipo: "Principal"
+                        tipoDocumentoIdentidad: "1"
+                        numeroDocumento: "45678912"
+                        nombres: "JUAN CARLOS"
+                        apellidos: "PEREZ RAMOS"
+                        licencia: "Q45678912"
+                  direcciones:
+                    partida:
+                      ubigeo: "150101"
+                      direccion: "AV. EJEMPLO 123, LIMA"
+                      codigoEstablecimiento: "0000"
+                    llegada:
+                      ubigeo: "150104"
+                      direccion: "AV. EJEMPLO 456, LIMA"
+                      codigoEstablecimiento: "0000"
+                  items:
+                    - orden: 1
+                      descripcion: "CAJA DE CARTON 30X20X15"
+                      cantidad: 100
+                      unidadMedida: "NIU"
+      responses:
+        '201':
+          description: GRE creada y validada (aún no enviada a SUNAT)
+          headers:
+            Location:
+              description: URI del documento creado
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GreEmitida'
+        '200':
+          description: "Operación idempotente: la GRE ya existía y se devuelve la misma"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GreEmitida'
+        '400':
+          description: Payload inválido contra el esquema o las reglas de estructura
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '409':
+          description: Conflicto de idempotencia o serie ya anulada
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '422':
+          description: |
+            El documento es sintácticamente válido pero viola una regla de negocio de SUNAT
+            (motivo, modalidad, obligatoriedad condicional, catálogos). El detalle indica
+            el ítem de validación y el código de retorno esperado.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              examples:
+                motivoIncompleto:
+                  value:
+                    type: "https://api.gre.examen.local/probs/validacion-negocio"
+                    title: "Regla de negocio incumplida"
+                    status: 422
+                    code: "VALIDACION_NEGOCIO"
+                    detail: "El motivo 08 exige peso neto y sustento de diferencia de peso."
+                    rucEmisor: "20100000000"
+                    violations:
+                      - item: "24"
+                        tagUbl: "/DespatchAdvice/cac:Shipment/cbc:NetWeightMeasure"
+                        codigoRetorno: "4383"
+                        tipoRetorno: "ERROR"
+                        mensaje: "El peso neto es obligatorio para el motivo 08."
+    get:
+      tags: [GRE]
+      operationId: listarGuias
+      summary: Lista las GRE del RUC autorizado
+      parameters:
+        - name: rucEmisor
+          in: query
+          schema:
+            type: string
+            pattern: '^[0-9]{11}$'
+          description: RUC emisor. Debe pertenecer a la lista `ruc` del token.
+        - name: tipoDocumento
+          in: query
+          schema:
+            $ref: '#/components/schemas/TipoDocumentoGre'
+        - name: estado
+          in: query
+          schema:
+            $ref: '#/components/schemas/EstadoGre'
+        - name: serie
+          in: query
+          schema:
+            type: string
+            pattern: '^[A-Z][A-Z0-9]{3}$'
+        - name: desde
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: hasta
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: pagina
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+        - name: tamano
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+      responses:
+        '200':
+          description: Página de resultados
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginaGuias'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/v1/guias/{id}:
+    parameters:
+      - $ref: '#/components/parameters/IdGre'
+    get:
+      tags: [GRE]
+      operationId: consultarGuia
+      summary: Consulta el detalle de una GRE
+      responses:
+        '200':
+          description: Detalle de la GRE
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GreDetalle'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/v1/guias/{id}/xml:
+    parameters:
+      - $ref: '#/components/parameters/IdGre'
+    get:
+      tags: [GRE]
+      operationId: descargarXml
+      summary: Descarga el XML UBL 2.1 firmado
+      responses:
+        '200':
+          description: XML firmado
+          content:
+            application/xml:
+              schema:
+                type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: La GRE aún no ha sido firmada
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /api/v1/guias/{id}/zip:
+    parameters:
+      - $ref: '#/components/parameters/IdGre'
+    get:
+      tags: [GRE]
+      operationId: descargarZip
+      summary: Descarga el ZIP con el XML firmado (envío unitario)
+      responses:
+        '200':
+          description: Archivo ZIP
+          content:
+            application/zip:
+              schema:
+                type: string
+                format: binary
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/v1/guias/{id}/envios:
+    parameters:
+      - $ref: '#/components/parameters/IdGre'
+    post:
+      tags: [Envíos]
+      operationId: enviarGuia
+      summary: Envía la GRE a SUNAT (síncrono o encolado)
+      description: |
+        Envía el ZIP firmado al Web Service de SUNAT y persiste la respuesta.
+        El reintento de errores transitorios (timeout, 5xx) se realiza automáticamente
+        con backoff exponencial; los `ERROR` de SUNAT no se reintentan.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                modo:
+                  type: string
+                  enum: [SINCRONO, ENCOLADO]
+                  default: ENCOLADO
+                comentarios:
+                  type: string
+                  maxLength: 250
+      responses:
+        '202':
+          description: Envío encolado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Envio'
+        '200':
+          description: Envío síncrono ya respondido por SUNAT
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Envio'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: La GRE ya fue enviada o está en un estado no enviable
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+    get:
+      tags: [Envíos]
+      operationId: listarEnvios
+      summary: Historial de intentos de envío y códigos de retorno
+      responses:
+        '200':
+          description: Historial de envíos
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Envio'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/v1/guias/{id}/cdr:
+    parameters:
+      - $ref: '#/components/parameters/IdGre'
+    get:
+      tags: [Envíos]
+      operationId: descargarCdr
+      summary: Descarga el CDR (Constancia de Recepción) devuelto por SUNAT
+      responses:
+        '200':
+          description: CDR en XML (ZIP si SUNAT lo devuelve empaquetado)
+          content:
+            application/xml:
+              schema:
+                type: string
+            application/zip:
+              schema:
+                type: string
+                format: binary
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/v1/guias/{id}/validacion:
+    parameters:
+      - $ref: '#/components/parameters/IdGre'
+    post:
+      tags: [GRE]
+      operationId: validarGuia
+      summary: Ejecuta la validación local de una GRE sin enviarla
+      description: |
+        Aplica las reglas de negocio y los catálogos vigentes, devolviendo la lista de
+        violaciones con su ítem de validación, su tag UBL y el código de retorno de SUNAT
+        que se generaría. No persiste ni envía nada.
+      responses:
+        '200':
+          description: Resultado de la validación
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultadoValidacion'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/v1/series:
+    get:
+      tags: [Series]
+      operationId: listarSeries
+      summary: Lista las series habilitadas por el RUC
+      parameters:
+        - name: rucEmisor
+          in: query
+          schema:
+            type: string
+            pattern: '^[0-9]{11}$'
+      responses:
+        '200':
+          description: Series registradas
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Serie'
+    post:
+      tags: [Series]
+      operationId: registrarSerie
+      summary: Registra una nueva serie de numeración
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [rucEmisor, tipoDocumento, serie]
+              properties:
+                rucEmisor:
+                  type: string
+                  pattern: '^[0-9]{11}$'
+                tipoDocumento:
+                  $ref: '#/components/schemas/TipoDocumentoGre'
+                serie:
+                  type: string
+                  pattern: '^[A-Z][A-Z0-9]{3}$'
+                descripcion:
+                  type: string
+                  maxLength: 250
+      responses:
+        '201':
+          description: Serie registrada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Serie'
+        '409':
+          description: La serie ya existe o no cumple el prefijo del tipo de documento
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /api/v1/catalogos:
+    get:
+      tags: [Catálogos]
+      operationId: listarCatalogos
+      summary: Lista los catálogos disponibles y su vigencia
+      responses:
+        '200':
+          description: Catálogos disponibles
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Catalogo'
+  /api/v1/catalogos/{codigo}:
+    parameters:
+      - name: codigo
+        in: path
+        required: true
+        schema:
+          type: string
+          pattern: '^[0-9]{2}$|^D-37$'
+        description: Código del catálogo (01, 03, 06, 13, 18, 20, 25, 52, 55, 61, 62, 63, 64, 65, D-37).
+    get:
+      tags: [Catálogos]
+      operationId: consultarCatalogo
+      summary: Devuelve el catálogo vigente (cabecera y metadatos)
+      responses:
+        '200':
+          description: Catálogo vigente
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Catalogo'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/v1/catalogos/{codigo}/items:
+    parameters:
+      - name: codigo
+        in: path
+        required: true
+        schema:
+          type: string
+          pattern: '^[0-9]{2}$|^D-37$'
+      - name: busqueda
+        in: query
+        schema:
+          type: string
+          maxLength: 100
+      - name: pagina
+        in: query
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+      - name: tamano
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 500
+          default: 100
+    get:
+      tags: [Catálogos]
+      operationId: listarItemsCatalogo
+      summary: Lista los ítems de un catálogo
+      responses:
+        '200':
+          description: Página de ítems del catálogo
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginaItemsCatalogo'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /health:
+    get:
+      tags: [GRE]
+      operationId: health
+      summary: Sonda de salud del servicio
+      security: []
+      responses:
+        '200':
+          description: Servicio operativo
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  estado:
+                    type: string
+                    example: UP
+                  version:
+                    type: string
+                    example: 1.0.0
+                  baseDatos:
+                    type: string
+                    example: UP
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        Token OAuth 2.0 firmado con RS256 (ver [ADR-0002](../adr/0002-autenticacion-jwt.md)).
+        Requiere `scope` con `gre.emitir`, `gre.consultar`, `gre.enviar` o `catalogos.leer`
+        según la operación, y el claim `ruc` con los RUC emisores habilitados.
+  parameters:
+    IdGre:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      schema:
+        type: string
+        maxLength: 128
+      description: Clave de idempotencia. Obligatoria en operaciones de emisión y envío.
+  responses:
+    Unauthorized:
+      description: Token ausente, inválido o expirado
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    Forbidden:
+      description: El token no habilita el RUC o el scope requerido
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    NotFound:
+      description: El recurso no existe o no pertenece al RUC autorizado
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+  schemas:
+    TipoDocumentoGre:
+      type: string
+      enum: ["09", "31"]
+      description: '`09` = GRE Remitente (serie `T###`); `31` = GRE Transportista (serie `V###`).'
+    EstadoGre:
+      type: string
+      enum:
+        - BORRADOR
+        - VALIDADA
+        - FIRMADA
+        - ENVIADA
+        - ACEPTADA
+        - ACEPTADA_CON_OBSERVACIONES
+        - RECHAZADA
+        - PENDIENTE_REINTENTO
+    Problem:
+      type: object
+      description: Formato de error (RFC 9457 `application/problem+json`).
+      required: [type, title, status, code]
+      properties:
+        type:
+          type: string
+          format: uri
+          example: "https://api.gre.examen.local/probs/validacion-negocio"
+        title:
+          type: string
+          example: "Regla de negocio incumplida"
+        status:
+          type: integer
+          example: 422
+        code:
+          type: string
+          example: "VALIDACION_NEGOCIO"
+        detail:
+          type: string
+        instance:
+          type: string
+        traceId:
+          type: string
+        rucEmisor:
+          type: string
+        violations:
+          type: array
+          items:
+            $ref: '#/components/schemas/Violacion'
+    Violacion:
+      type: object
+      required: [item, codigoRetorno, tipoRetorno, mensaje]
+      properties:
+        item:
+          type: string
+          description: Ítem de la hoja de validación de SUNAT (1..90).
+          example: "24"
+        tagUbl:
+          type: string
+          example: "/DespatchAdvice/cac:Shipment/cbc:NetWeightMeasure"
+        codigoRetorno:
+          type: string
+          example: "4383"
+        tipoRetorno:
+          type: string
+          enum: [ERROR, OBSERV, REST]
+        mensaje:
+          type: string
+    SolicitudEmision:
+      $ref: './schema.json#/$defs/SolicitudEmision'
+    GreEmitida:
+      type: object
+      required: [id, tipoDocumento, identificador, estado, hashXml, fechaCreacion]
+      properties:
+        id:
+          type: string
+          format: uuid
+        tipoDocumento:
+          $ref: '#/components/schemas/TipoDocumentoGre'
+        identificador:
+          type: object
+          properties:
+            rucEmisor:
+              type: string
+            serie:
+              type: string
+            correlativo:
+              type: integer
+            numero:
+              type: string
+              description: Serie-correlativo tal como viaja en el nombre del archivo (`T001-00000001`).
+        estado:
+          $ref: '#/components/schemas/EstadoGre'
+        hashXml:
+          type: string
+          description: SHA-256 del XML firmado, en hexadecimal.
+        nombreArchivo:
+          type: string
+          example: "20100000000-09-T001-1.xml"
+        fechaCreacion:
+          type: string
+          format: date-time
+        validacion:
+          $ref: '#/components/schemas/ResultadoValidacion'
+    GreDetalle:
+      allOf:
+        - $ref: '#/components/schemas/GreEmitida'
+        - type: object
+          properties:
+            solicitud:
+              $ref: '#/components/schemas/SolicitudEmision'
+            envios:
+              type: array
+              items:
+                $ref: '#/components/schemas/Envio'
+            observaciones:
+              type: array
+              items:
+                $ref: '#/components/schemas/Violacion'
+    Envio:
+      type: object
+      required: [id, intento, estado, fechaEnvio]
+      properties:
+        id:
+          type: string
+          format: uuid
+        intento:
+          type: integer
+          minimum: 1
+        estado:
+          type: string
+          enum: [EN_COLA, ENVIADO, ACEPTADO, ACEPTADO_CON_OBSERVACIONES, RECHAZADO, ERROR_TRANSPORTE]
+        fechaEnvio:
+          type: string
+          format: date-time
+        codigoRetornoSunat:
+          type: string
+          example: "0"
+        descripcionRespuesta:
+          type: string
+        ticket:
+          type: string
+        cdrDisponible:
+          type: boolean
+        violacion:
+          $ref: '#/components/schemas/Violacion'
+    ResultadoValidacion:
+      type: object
+      required: [valido, violations]
+      properties:
+        valido:
+          type: boolean
+        violations:
+          type: array
+          items:
+            $ref: '#/components/schemas/Violacion'
+        advertencias:
+          type: array
+          items:
+            $ref: '#/components/schemas/Violacion'
+    Serie:
+      type: object
+      required: [rucEmisor, tipoDocumento, serie, estado]
+      properties:
+        rucEmisor:
+          type: string
+        tipoDocumento:
+          $ref: '#/components/schemas/TipoDocumentoGre'
+        serie:
+          type: string
+          pattern: '^[A-Z][A-Z0-9]{3}$'
+        estado:
+          type: string
+          enum: [ACTIVA, ANULADA]
+        ultimoCorrelativo:
+          type: integer
+        descripcion:
+          type: string
+    Catalogo:
+      type: object
+      required: [codigo, nombre, vigenciaDesde]
+      properties:
+        codigo:
+          type: string
+          example: "20"
+        nombre:
+          type: string
+          example: "Código de motivo de traslado"
+        vigenciaDesde:
+          type: string
+          format: date
+        vigenciaHasta:
+          type: string
+          format: date
+          nullable: true
+        fuente:
+          type: string
+          example: "SUNAT — ValidacionesGREv20250421_0.xlsx (hoja Catálogos)"
+        totalItems:
+          type: integer
+    PaginaGuias:
+      type: object
+      required: [contenido, pagina, tamano, totalElementos]
+      properties:
+        contenido:
+          type: array
+          items:
+            $ref: '#/components/schemas/GreEmitida'
+        pagina:
+          type: integer
+        tamano:
+          type: integer
+        totalElementos:
+          type: integer
+        totalPaginas:
+          type: integer
+    PaginaItemsCatalogo:
+      type: object
+      required: [contenido, pagina, tamano, totalElementos]
+      properties:
+        contenido:
+          type: array
+          items:
+            type: object
+            properties:
+              codigo:
+                type: string
+              nombre:
+                type: string
+              atributos:
+                type: object
+                additionalProperties:
+                  type: string
+        pagina:
+          type: integer
+        tamano:
+          type: integer
+        totalElementos:
+          type: integer

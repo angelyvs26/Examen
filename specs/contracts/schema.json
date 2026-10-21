@@ -1,0 +1,819 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://api.gre.examen.local/schemas/solicitud-emision.schema.json",
+  "title": "SolicitudEmision",
+  "description": "Payload de emisión de una Guía de Remisión Electrónica (GRE) en su representación JSON. Es el contrato de entrada de POST /api/v1/guias. Al recibirlo, el servicio genera el XML UBL 2.1 (DespatchAdvice), lo firma y lo empaqueta. Las reglas derivan de la R.S. 123-2022-SUNAT, Anexo N.° 14, y de las hojas de validación «Guía-Remitente2_0» y «Guía-Transportista2_0» del XLSX ValidacionesGREv20250421_0.xlsx. Referencia de tags UBL: [contrato XML UBL](../features/0001-emision-gre-remitente/contrato-xml-ubl.md).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["tipoDocumento", "identificador", "remitente", "destinatario", "envio", "direcciones", "items"],
+  "properties": {
+    "tipoDocumento": {
+      "$ref": "#/$defs/TipoDocumentoGre"
+    },
+    "observacion": {
+      "type": "string",
+      "maxLength": 250,
+      "pattern": "^\\S(.*\\S)?$",
+      "description": "Observaciones (cbc:Note, ítem 7). Sin espacios distintos del espacio normal; no puede contener sólo espacios."
+    },
+    "identificador": {
+      "$ref": "#/$defs/Identificador"
+    },
+    "remitente": {
+      "$ref": "#/$defs/Parte"
+    },
+    "destinatario": {
+      "$ref": "#/$defs/Parte"
+    },
+    "proveedor": {
+      "$ref": "#/$defs/Parte"
+    },
+    "comprador": {
+      "$ref": "#/$defs/Parte"
+    },
+    "documentosRelacionados": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/DocumentoRelacionado"
+      },
+      "description": "Documentos que sustentan el traslado (ítems 11-14). Máximo 20 elementos, sin duplicar (tipo + número)."
+    },
+    "envio": {
+      "$ref": "#/$defs/Envio"
+    },
+    "direcciones": {
+      "$ref": "#/$defs/Direcciones"
+    },
+    "items": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 2000,
+      "items": {
+        "$ref": "#/$defs/Item"
+      },
+      "description": "Bienes a trasladar (ítems 74-90). Cada línea es un cac:DespatchLine."
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "tipoDocumento": { "const": "09" }
+        },
+        "required": ["tipoDocumento"]
+      },
+      "then": {
+        "properties": {
+          "identificador": {
+            "properties": {
+              "serie": { "pattern": "^T[A-Z0-9]{3}$" }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "tipoDocumento": { "const": "31" }
+        },
+        "required": ["tipoDocumento"]
+      },
+      "then": {
+        "properties": {
+          "identificador": {
+            "properties": {
+              "serie": { "pattern": "^V[A-Z0-9]{3}$" }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "envio": {
+            "properties": {
+              "motivo": { "enum": ["02", "07", "13"] }
+            },
+            "required": ["motivo"]
+          }
+        },
+        "required": ["envio"]
+      },
+      "then": {
+        "required": ["proveedor"]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "envio": {
+            "properties": {
+              "motivo": { "enum": ["03", "13"] }
+            },
+            "required": ["motivo"]
+          }
+        },
+        "required": ["envio"]
+      },
+      "then": {
+        "required": ["comprador"]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "envio": {
+            "properties": {
+              "motivo": { "enum": ["06", "17", "19"] }
+            },
+            "required": ["motivo"]
+          }
+        },
+        "required": ["envio"]
+      },
+      "then": {
+        "properties": {
+          "destinatario": {
+            "properties": {
+              "tipoDocumentoIdentidad": { "const": "6" }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "envio": {
+            "properties": {
+              "motivo": { "enum": ["08", "09", "19"] }
+            },
+            "required": ["motivo"]
+          }
+        },
+        "required": ["envio"]
+      },
+      "then": {
+        "properties": {
+          "envio": {
+            "required": ["pesoNeto", "sustentoDiferenciaPeso"]
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "envio": {
+                  "properties": {
+                    "indicadores": {
+                      "contains": { "const": "SUNAT_Envio_IndicadorTrasladoTotal" }
+                    }
+                  },
+                  "required": ["indicadores"]
+                }
+              },
+              "required": ["envio"]
+            },
+            "then": {
+              "properties": {
+                "envio": {
+                  "properties": {
+                    "pesoNeto": false,
+                    "sustentoDiferenciaPeso": false
+                  }
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "envio": {
+            "properties": {
+              "modalidad": { "const": "01" }
+            },
+            "required": ["modalidad"]
+          }
+        },
+        "required": ["envio"]
+      },
+      "then": {
+        "properties": {
+          "envio": {
+            "required": ["transportista"]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "envio": {
+            "properties": {
+              "modalidad": { "const": "02" }
+            },
+            "required": ["modalidad"]
+          }
+        },
+        "required": ["envio"]
+      },
+      "then": {
+        "properties": {
+          "envio": {
+            "properties": {
+              "transportista": false
+            },
+            "required": ["vehiculos", "conductores"]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "envio": {
+            "properties": {
+              "motivo": { "const": "18" }
+            },
+            "required": ["motivo"]
+          }
+        },
+        "required": ["envio"]
+      },
+      "then": {
+        "properties": {
+          "direcciones": {
+            "properties": {
+              "llegada": false
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "envio": {
+            "properties": {
+              "motivo": { "const": "13" }
+            },
+            "required": ["motivo"]
+          }
+        },
+        "required": ["envio"]
+      },
+      "then": {
+        "properties": {
+          "envio": {
+            "required": ["descripcionMotivo"]
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "TipoDocumentoGre": {
+      "type": "string",
+      "enum": ["09", "31"],
+      "description": "Catálogo 01: `09` = GRE Remitente (serie `T###`); `31` = GRE Transportista (serie `V###`)."
+    },
+    "TipoDocumentoIdentidad": {
+      "type": "string",
+      "enum": ["0", "1", "4", "6", "7", "A", "B", "C", "D", "E", "F", "G"],
+      "description": "Catálogo 06 — código de tipo de documento de identidad (@schemeID)."
+    },
+    "AutorizacionEspecial": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["entidad", "numero"],
+      "properties": {
+        "entidad": {
+          "type": "string",
+          "pattern": "^[A-Z0-9]{2}$",
+          "description": "Catálogo D-37 — entidad que emite la autorización especial (SUCAMEC, DIGEMID, MTC, SERFOR, ...)."
+        },
+        "numero": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 50,
+          "pattern": "^[A-Za-z0-9\\-/]+$"
+        }
+      }
+    },
+    "Identificador": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rucEmisor", "fechaEmision", "horaEmision"],
+      "properties": {
+        "rucEmisor": {
+          "type": "string",
+          "pattern": "^[0-9]{11}$",
+          "description": "Debe coincidir con uno de los RUC del claim `ruc` del token; en caso contrario, `403 RUC_NO_AUTORIZADO`."
+        },
+        "serie": {
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9]{3}$",
+          "description": "Serie de 4 caracteres. El prefijo depende del tipo de documento: `T` para 09 y `V` para 31."
+        },
+        "correlativo": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 99999999,
+          "description": "Si se omite, el servicio lo reserva de forma transaccional dentro de la misma operación de emisión."
+        },
+        "fechaEmision": {
+          "type": "string",
+          "format": "date",
+          "description": "cbc:IssueDate (ítem 4). No puede ser futura ni anterior en más de 1 día a la fecha de recepción (código 2108)."
+        },
+        "horaEmision": {
+          "type": "string",
+          "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]$",
+          "description": "cbc:IssueTime (ítem 5), formato hh:mm:ss."
+        }
+      }
+    },
+    "Parte": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tipoDocumentoIdentidad", "numeroDocumento", "nombre"],
+      "properties": {
+        "tipoDocumentoIdentidad": {
+          "$ref": "#/$defs/TipoDocumentoIdentidad"
+        },
+        "numeroDocumento": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 15,
+          "pattern": "^[A-Za-z0-9]+$",
+          "description": "RUC (11 dígitos) cuando `tipoDocumentoIdentidad` = `6`; DNI (8 dígitos) cuando = `1`."
+        },
+        "nombre": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 250,
+          "pattern": "^\\S(.*\\S)?$",
+          "description": "cbc:RegistrationName — razón social, denominación o nombres y apellidos."
+        },
+        "autorizacionEspecial": {
+          "$ref": "#/$defs/AutorizacionEspecial"
+        }
+      }
+    },
+    "DocumentoRelacionado": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tipo", "numero"],
+      "properties": {
+        "tipo": {
+          "type": "string",
+          "enum": ["01", "03", "04", "09", "12", "31", "48", "49", "50", "52", "65", "66", "67", "68", "69", "71", "72", "73", "74", "75", "76", "77", "78", "80", "81", "82", "91"],
+          "description": "Catálogo 61 — código de tipo de documento relacionado (@DocumentTypeCode). `31` sólo aplica a la GRE Transportista; `91` (Manifiesto de Carga) sólo a la Remitente."
+        },
+        "descripcion": {
+          "type": "string",
+          "maxLength": 120,
+          "description": "cbc:DocumentType. Obligatorio si existe `tipo` y recíprocamente."
+        },
+        "numero": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100,
+          "pattern": "^[A-Za-z0-9\\-]+$"
+        },
+        "rucEmisor": {
+          "type": "string",
+          "pattern": "^[0-9]{11}$",
+          "description": "Obligatorio para los tipos 01, 03, 04, 09, 12 y 48 (ítem 14)."
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "tipo": { "enum": ["01", "03", "04", "09", "12", "48"] }
+            },
+            "required": ["tipo"]
+          },
+          "then": {
+            "required": ["rucEmisor"]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "tipo": { "const": "49" }
+            },
+            "required": ["tipo"]
+          },
+          "then": {
+            "properties": {
+              "numero": { "pattern": "^[0-9]{15}$" }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "tipo": { "const": "80" }
+            },
+            "required": ["tipo"]
+          },
+          "then": {
+            "properties": {
+              "numero": { "pattern": "^[0-9]{15}$" }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "tipo": { "const": "01" }
+            },
+            "required": ["tipo"]
+          },
+          "then": {
+            "properties": {
+              "numero": {
+                "pattern": "^([A-Z0-9]{3}-[0-9]{1,8}|E001-[0-9]{1,8}|[0-9]{1,4}-[0-9]{1,8})$"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "Envio": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["motivo", "modalidad", "pesoBruto"],
+      "properties": {
+        "motivo": {
+          "type": "string",
+          "enum": ["01", "02", "03", "04", "05", "06", "07", "08", "09", "13", "14", "17", "18", "19"],
+          "description": "Catálogo 20 — código de motivo de traslado (@HandlingCode). Determina la obligatoriedad condicional del resto del envío."
+        },
+        "descripcionMotivo": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 100,
+          "description": "cbc:HandlingInstructions. Obligatoria para el motivo `13`; no puede consistir sólo en palabras clave del listado de la SUNAT (código 4190)."
+        },
+        "modalidad": {
+          "type": "string",
+          "enum": ["01", "02"],
+          "description": "Catálogo 18 — `01` transporte público, `02` transporte privado."
+        },
+        "fechaInicioTraslado": {
+          "type": "string",
+          "format": "date"
+        },
+        "fechaEntregaTransportista": {
+          "type": "string",
+          "format": "date"
+        },
+        "pesoBruto": {
+          "$ref": "#/$defs/Medida"
+        },
+        "pesoNeto": {
+          "$ref": "#/$defs/Medida"
+        },
+        "sustentoDiferenciaPeso": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 250
+        },
+        "numeroBultos": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9999999999999
+        },
+        "indicadores": {
+          "type": "array",
+          "maxItems": 10,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": [
+              "SUNAT_Envio_IndicadorTransbordoProgramado",
+              "SUNAT_Envio_IndicadorTrasladoVehiculoM1L",
+              "SUNAT_Envio_IndicadorRetornoVehiculoEnvaseVacio",
+              "SUNAT_Envio_IndicadorRetornoVehiculoVacio",
+              "SUNAT_Envio_IndicadorTrasladoTotal",
+              "SUNAT_Envio_IndicadorRegistroVehiculosConductores",
+              "SUNAT_Envio_IndicadorContenedorMC",
+              "SUNAT_Envio_IndicadorTransporteSubcontratado",
+              "SUNAT_Envio_IndicadorPagadorFlete_Remitente",
+              "SUNAT_Envio_IndicadorPagadorFlete_Subcontratador",
+              "SUNAT_Envio_IndicadorPagadorFlete_Tercero"
+            ],
+            "description": "Valores admitidos en cbc:SpecialInstructions. Los literales de «registro de vehículos y conductores» (ítem 40) y «traslado en contenedor del Manifiesto de Carga» (ítem 41) son los del estándar Remitente; deben confirmarse contra la hoja de validación de SUNAT antes de habilitarlos en producción."
+          }
+        },
+        "contenedores": {
+          "type": "array",
+          "maxItems": 2,
+          "items": {
+            "$ref": "#/$defs/Contenedor"
+          }
+        },
+        "puertoAeropuerto": {
+          "$ref": "#/$defs/PuertoAeropuerto"
+        },
+        "transportista": {
+          "$ref": "#/$defs/Transportista"
+        },
+        "subcontratador": {
+          "$ref": "#/$defs/Parte"
+        },
+        "pagadorFlete": {
+          "$ref": "#/$defs/Parte"
+        },
+        "vehiculos": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 3,
+          "items": {
+            "$ref": "#/$defs/Vehiculo"
+          },
+          "description": "Un vehículo principal y hasta dos secundarios (ítems 47-52)."
+        },
+        "conductores": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 3,
+          "items": {
+            "$ref": "#/$defs/Conductor"
+          },
+          "description": "Un conductor principal y hasta dos secundarios (ítems 53-60)."
+        }
+      }
+    },
+    "Medida": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["valor", "unidad"],
+      "properties": {
+        "valor": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 999999999999
+        },
+        "unidad": {
+          "type": "string",
+          "enum": ["KGM", "TNE", "NIU", "GRM", "LTR", "MTR", "MTK", "SET", "BX", "PK", "DD", "U"],
+          "description": "Catálogo 03 (UN/ECE Recommendation 20) y Catálogo 65 para traslados con DAM o DS."
+        }
+      }
+    },
+    "Contenedor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["numero"],
+      "properties": {
+        "numero": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 17,
+          "pattern": "^[A-Z0-9\\-/]+$"
+        },
+        "precinto": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100,
+          "pattern": "^[A-Za-z0-9,]+$"
+        }
+      }
+    },
+    "PuertoAeropuerto": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["codigo", "tipo"],
+      "properties": {
+        "codigo": {
+          "type": "string",
+          "pattern": "^[0-9]{3}$",
+          "description": "Catálogo 63 (puertos) o Catálogo 64 (aeropuertos)."
+        },
+        "tipo": {
+          "type": "string",
+          "enum": ["1", "2"],
+          "description": "cbc:LocationTypeCode: `1` puerto, `2` aeropuerto."
+        },
+        "nombre": {
+          "type": "string",
+          "maxLength": 200
+        }
+      }
+    },
+    "Transportista": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tipoDocumentoIdentidad", "numeroDocumento", "nombre"],
+      "properties": {
+        "tipoDocumentoIdentidad": {
+          "$ref": "#/$defs/TipoDocumentoIdentidad"
+        },
+        "numeroDocumento": {
+          "type": "string",
+          "pattern": "^[0-9]{11}$"
+        },
+        "nombre": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 250
+        },
+        "registroMtc": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 20,
+          "pattern": "^[A-Za-z0-9]+$"
+        },
+        "autorizacionEspecial": {
+          "$ref": "#/$defs/AutorizacionEspecial"
+        }
+      }
+    },
+    "Vehiculo": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["placa"],
+      "properties": {
+        "placa": {
+          "type": "string",
+          "minLength": 6,
+          "maxLength": 8,
+          "pattern": "^[A-Z0-9]+$"
+        },
+        "tuc": {
+          "type": "string",
+          "minLength": 10,
+          "maxLength": 15,
+          "pattern": "^[A-Za-z0-9]+$",
+          "description": "TUC o certificado de habilitación vehicular (@RegistrationNationalityID)."
+        },
+        "autorizacionEspecial": {
+          "$ref": "#/$defs/AutorizacionEspecial"
+        }
+      }
+    },
+    "Conductor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tipo", "tipoDocumentoIdentidad", "numeroDocumento", "nombres", "apellidos", "licencia"],
+      "properties": {
+        "tipo": {
+          "type": "string",
+          "enum": ["Principal", "Secundario"],
+          "description": "cbc:JobTitle. Sólo puede haber un `Principal`."
+        },
+        "tipoDocumentoIdentidad": {
+          "$ref": "#/$defs/TipoDocumentoIdentidad"
+        },
+        "numeroDocumento": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 15,
+          "pattern": "^[A-Za-z0-9]+$"
+        },
+        "nombres": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 250
+        },
+        "apellidos": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 250
+        },
+        "licencia": {
+          "type": "string",
+          "minLength": 9,
+          "maxLength": 10,
+          "pattern": "^[A-Za-z0-9]+$"
+        }
+      }
+    },
+    "Direcciones": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["partida"],
+      "properties": {
+        "partida": {
+          "$ref": "#/$defs/Direccion"
+        },
+        "llegada": {
+          "$ref": "#/$defs/Direccion"
+        }
+      }
+    },
+    "Direccion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ubigeo", "direccion"],
+      "properties": {
+        "ubigeo": {
+          "type": "string",
+          "pattern": "^[0-9]{6}$",
+          "description": "Catálogo 13 — código de ubicación geográfica (INEI)."
+        },
+        "direccion": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 500
+        },
+        "rucAsociado": {
+          "type": "string",
+          "pattern": "^[0-9]{11}$",
+          "description": "@listID del cbc:AddressTypeCode."
+        },
+        "codigoEstablecimiento": {
+          "type": "string",
+          "pattern": "^[0-9]{4}$"
+        },
+        "latitud": {
+          "type": "number",
+          "minimum": -90,
+          "maximum": 90
+        },
+        "longitud": {
+          "type": "number",
+          "minimum": -180,
+          "maximum": 180
+        }
+      }
+    },
+    "Item": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["orden", "descripcion", "cantidad", "unidadMedida"],
+      "properties": {
+        "orden": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9999,
+          "description": "cbc:ID y cac:OrderLineReference/cbc:LineID. No puede repetirse dentro de la GRE."
+        },
+        "codigo": {
+          "type": "string",
+          "maxLength": 30
+        },
+        "descripcion": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 500
+        },
+        "cantidad": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Formato n(12,10). Con documento relacionado `91` (Manifiesto de Carga) el valor es un entero positivo de hasta 10 dígitos."
+        },
+        "unidadMedida": {
+          "type": "string",
+          "maxLength": 3
+        },
+        "codigoProductoSunat": {
+          "type": "string",
+          "pattern": "^[0-9]{1,8}$",
+          "description": "Catálogo 25 (UNSPSC). Obligatorio cuando la propiedad 7022 (indicador de bien normalizado) vale `1`."
+        },
+        "gtin": {
+          "type": "string",
+          "maxLength": 14,
+          "pattern": "^[0-9]{8}$|^[0-9]{12}$|^[0-9]{13}$|^[0-9]{14}$"
+        },
+        "propiedades": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PropiedadItem"
+          },
+          "description": "cac:AdditionalItemProperty — conceptos del Catálogo 55 (7020 a 7028 para la GRE)."
+        }
+      }
+    },
+    "PropiedadItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["codigo"],
+      "properties": {
+        "codigo": {
+          "type": "string",
+          "pattern": "^[0-9]{4}$",
+          "description": "Catálogo 55 — código de identificación del concepto tributario (@NameCode)."
+        },
+        "nombre": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "valor": {
+          "type": "string",
+          "maxLength": 100
+        }
+      }
+    }
+  }
+}

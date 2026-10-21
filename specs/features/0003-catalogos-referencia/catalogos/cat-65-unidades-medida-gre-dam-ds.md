@@ -1,0 +1,129 @@
+# Catálogo 65 — Código de unidades de medida (para uso solo para la GRE en DAM o DS)
+
+| Metadato | Valor |
+|---|---|
+| Código de catálogo | 65 |
+| Nombre oficial |  Código de unidades de medida (para uso solo para la GRE en DAM o DS) |
+| Columnas | `Código`, `Descripción` |
+| Número de filas | 97 |
+| Ubicación en la fuente | Hoja «Catálogos» del XLSX oficial `ValidacionesGREv20250421_0.xlsx`; filas [411] a [507] del archivo `Cat_logos.txt` |
+| Archivo de datos | `../datos/cat-65-unidades-medida-gre-dam-ds.csv` |
+
+## Uso en la GRE
+
+Unidades de medida admitidas en la GRE para los traslados con DAM o DS. Se consume en la unidad de medida de la cantidad del ítem.
+
+## Tag / atributo XML que lo consume
+
+- `/DespatchAdvice/cac:DespatchLine/cbc:DeliveredQuantity@unitCode` — Unidad de medida de la cantidad del ítem (catálogo 03 en general, catálogo 65 para DAM o DS). Atributo `@unitCodeListID="UN/ECE rec 20"`.
+
+## Tabla
+
+| Código | Descripción |
+|---|---|
+| 126 | DOCENA POR 10**6 |
+| 12U | DOCENA |
+| 2U | PAR |
+| 2U6 | PAR POR 10**6 |
+| AM | AMPOLLA |
+| BAL | BALDE |
+| BID | BIDONES |
+| BLS | BOLSA |
+| BOB | BOBINAS |
+| BOT | BOTELLAS |
+| BRR | BARRILES |
+| CAJ | CAJA |
+| CIL | CILINDRO |
+| CM | CENTIMETRO LINEAL |
+| CM2 | CENTIMETRO CUADRADO |
+| CM3 | CENTIMETRO CUBICO |
+| CON | CONOS |
+| CRT | CARTONES |
+| FDO | FARDO |
+| FRC | FRASCOS |
+| GAL | US GALON (3,7843 L) |
+| GLE | GALON INGLES (4,545956L) |
+| GR | GRAMO |
+| GRU | GRUESA |
+| HL | HECTOLITRO |
+| HOJ | HOJA |
+| JGS | JUEGO |
+| KG | KILOGRAMO |
+| KG3 | KILOGRAMO POR 10**3 (TM) |
+| KG6 | KILOGRAMO POR 10**6 |
+| KGA | KILOGRAMO INGREDIENTE ACTIVO |
+| KI | QUILATE |
+| KI6 | QUILATE 10**6 |
+| KIT | KIT |
+| KL6 | KILOS X 10 EXP - 6 (MG) |
+| KL9 | KILOS X 10 EXP -9 |
+| KM | KILOMETRO |
+| KW3 | KILOVATIO HORA POR 10**3 (1000KWH) |
+| KW6 | KILOVATIO HORA POR 10**6 |
+| KWH | KILOVATIO HORA |
+| L | LITRO |
+| L 6 | LITRO POR 10**6 |
+| LAT | LATAS |
+| LB | LIBRAS |
+| M | METRO |
+| M 6 | METRO POR 10**6 |
+| M2 | METRO CUADRADO |
+| M26 | METRO CUADRADO POR 10**6 |
+| M3 | METRO CUBICO |
+| M36 | METRO CUBICO POR 10**6 |
+| MGA | MILIGRAMO ACTIVO |
+| MGR | MILIGRAMOS |
+| ML | MILILITRO |
+| MLL | MILLARES |
+| MM | MILIMETRO |
+| MM2 | MILIMETRO CUADRADO |
+| MM3 | MILIMETRO CUBICO |
+| MU | MUESTRAS |
+| MWH | MEGAWATT HORA |
+| OZ | ONZAS |
+| PAI | PAILAS |
+| PAL | PALETAS |
+| PAQ | PAQUETE |
+| PL | PLACAS |
+| PLC | PLANCHAS |
+| PLG | PLIEGO |
+| PS | PIES |
+| PS2 | PIES CUADRADOS |
+| PS3 | PIES CUBICOS |
+| PST | PIES TABLARES(MADERA) |
+| PUL | PULGADAS |
+| PZA | PIEZAS |
+| QQ | QUINTAL METRICO (100 KG) |
+| QUT | QUINTAL USA (100 LB) |
+| RAM | RAMOS |
+| RES | RESMA |
+| ROL | ROLLOS |
+| SAC | SACO |
+| SET | SET |
+| TAM | TAMBOR |
+| TC | TONELADA CORTA |
+| TCS | TONELADA CORTA SECA |
+| TIR | TIRAS |
+| TL | TONELADA LARGA |
+| TLS | TONELADA LARGA SECA |
+| TM | TONELADAS |
+| TM3 | TONELADA CUBICA |
+| TMS | TONELADA METRICA SECA |
+| TUB | TUBOS |
+| U | UNIDAD |
+| U 3 | UNIDAD POR 10**3 |
+| U 6 | UNIDAD PO 10**6 |
+| U2 | CIENTO DE UNIDADES |
+| U3 | MILES DE UNIDADES |
+| U6 | MILLON DE UNIDADES |
+| YD | YARDA |
+| YD2 | YARDA CUADRADA |
+
+## Filas de referencia de la fuente (sin código de catálogo)
+
+- [510] Otros Listados
+
+## CSV
+
+`../datos/cat-65-unidades-medida-gre-dam-ds.csv` — misma tabla, separador `;`, codificación UTF-8, con cabecera.
+

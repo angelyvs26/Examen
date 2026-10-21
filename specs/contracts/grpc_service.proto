@@ -1,0 +1,355 @@
+syntax = "proto3";
+
+// Contrato gRPC de la plataforma de Guías de Remisión Electrónica (GRE) — SUNAT Perú.
+//
+// Uso: canal de alto volumen para integraciones máquina a máquina (ERP/WMS) que
+// ya trabajan con gRPC. El contrato REST equivalente está en openapi.yaml; ambos
+// exponen el mismo modelo de dominio y las mismas reglas de negocio.
+//
+// Autenticación: metadatos gRPC con `authorization: Bearer <JWT>` (RS256, ver
+// ../adr/0002-autenticacion-jwt.md). El RUC emisor se toma del claim `ruc` del
+// token; el campo `ruc_emisor` de los mensajes sólo se valida contra esa lista.
+//
+// Errores: se usa el modelo de estados de gRPC; el detalle viaja en
+// `google.rpc.Status.details` con un `DetalleViolacion` por cada regla incumplida.
+
+package com.examen.gre.v1;
+
+import "google/protobuf/empty.proto";
+import "google/protobuf/timestamp.proto";
+
+option java_package = "com.examen.gre.grpc.v1";
+option java_multiple_files = true;
+option java_outer_classname = "GreServiceProto";
+option objc_class_prefix = "GRE";
+
+// ---------------------------------------------------------------------------
+// Servicio
+// ---------------------------------------------------------------------------
+
+service GreService {
+  // Genera el XML UBL 2.1, lo firma y persiste la GRE. No envía a SUNAT.
+  rpc EmitirGuia (SolicitudEmision) returns (GreEmitida);
+
+  // Ejecuta la validación local (estructura, reglas de negocio y catálogos)
+  // sin persistir ni enviar. Pensado para el "dry-run" del ERP antes de emitir.
+  rpc ValidarGuia (ValidarGuiaRequest) returns (ResultadoValidacion);
+
+  // Devuelve el detalle de una GRE ya emitida.
+  rpc ConsultarGuia (ConsultarGuiaRequest) returns (GreDetalle);
+
+  // Lista las GRE del RUC autorizado con filtros y paginación.
+  rpc ListarGuias (ListarGuiasRequest) returns (PaginaGuias);
+
+  // Envía la GRE firmada al Web Service de SUNAT.
+  rpc EnviarGuia (EnviarGuiaRequest) returns (Envio);
+
+  // Devuelve el CDR (Constancia de Recepción) emitido por SUNAT.
+  rpc DescargarCdr (DescargarCdrRequest) returns (Cdr);
+
+  // Consulta los catálogos SUNAT vigentes.
+  rpc ListarCatalogos (ListarCatalogosRequest) returns (ListarCatalogosResponse);
+}
+
+// ---------------------------------------------------------------------------
+// Enumeraciones
+// ---------------------------------------------------------------------------
+
+enum TipoDocumentoGre {
+  TIPO_DOCUMENTO_GRE_NO_ESPECIFICADO = 0;
+  TIPO_DOCUMENTO_GRE_REMITENTE = 1;   // "09", serie T###
+  TIPO_DOCUMENTO_GRE_TRANSPORTISTA = 2; // "31", serie V###
+}
+
+enum EstadoGre {
+  ESTADO_GRE_NO_ESPECIFICADO = 0;
+  ESTADO_GRE_BORRADOR = 1;
+  ESTADO_GRE_VALIDADA = 2;
+  ESTADO_GRE_FIRMADA = 3;
+  ESTADO_GRE_ENVIADA = 4;
+  ESTADO_GRE_ACEPTADA = 5;
+  ESTADO_GRE_ACEPTADA_CON_OBSERVACIONES = 6;
+  ESTADO_GRE_RECHAZADA = 7;
+  ESTADO_GRE_PENDIENTE_REINTENTO = 8;
+}
+
+enum TipoRetorno {
+  TIPO_RETORNO_NO_ESPECIFICADO = 0;
+  TIPO_RETORNO_ERROR = 1;
+  TIPO_RETORNO_OBSERV = 2;
+  TIPO_RETORNO_REST = 3;
+}
+
+enum EstadoEnvio {
+  ESTADO_ENVIO_NO_ESPECIFICADO = 0;
+  ESTADO_ENVIO_EN_COLA = 1;
+  ESTADO_ENVIO_ENVIADO = 2;
+  ESTADO_ENVIO_ACEPTADO = 3;
+  ESTADO_ENVIO_ACEPTADO_CON_OBSERVACIONES = 4;
+  ESTADO_ENVIO_RECHAZADO = 5;
+  ESTADO_ENVIO_ERROR_TRANSPORTE = 6;
+}
+
+// ---------------------------------------------------------------------------
+// Solicitud de emisión (misma semántica que el schema.json del contrato REST)
+// ---------------------------------------------------------------------------
+
+message SolicitudEmision {
+  TipoDocumentoGre tipo_documento = 1;
+  Identificador identificador = 2;
+  Parte remitente = 3;
+  Parte destinatario = 4;
+  Parte proveedor = 5;      // motivos 02, 07, 13
+  Parte comprador = 6;      // motivos 03, 13
+  repeated DocumentoRelacionado documentos_relacionados = 7;
+  Envio envio = 8;
+  Direcciones direcciones = 9;
+  repeated Item items = 10;
+  string observacion = 11;  // cbc:Note, máximo 250 caracteres
+}
+
+message Identificador {
+  string ruc_emisor = 1;   // 11 dígitos; debe estar en el claim `ruc` del token
+  string serie = 2;         // 4 caracteres: prefijo T (remitente) o V (transportista)
+  int32 correlativo = 3;    // 0 = el servicio lo reserva de forma transaccional
+  string fecha_emision = 4; // ISO-8601 (YYYY-MM-DD)
+  string hora_emision = 5; // hh:mm:ss
+}
+
+message Parte {
+  string tipo_documento_identidad = 1; // Catálogo 06
+  string numero_documento = 2;
+  string nombre = 3;                   // razón social o nombres y apellidos
+  AutorizacionEspecial autorizacion_especial = 4;
+}
+
+message AutorizacionEspecial {
+  string entidad = 1;  // Catálogo D-37
+  string numero = 2;
+}
+
+message DocumentoRelacionado {
+  string tipo = 1;       // Catálogo 61
+  string descripcion = 2;
+  string numero = 3;
+  string ruc_emisor = 4;
+}
+
+message Envio {
+  string motivo = 1;              // Catálogo 20
+  string descripcion_motivo = 2;  // obligatoria para el motivo 13
+  string modalidad = 3;            // Catálogo 18: 01 público, 02 privado
+  string fecha_inicio_traslado = 4;
+  string fecha_entrega_transportista = 5;
+  Medida peso_bruto = 6;
+  Medida peso_neto = 7;
+  string sustento_diferencia_peso = 8;
+  int64 numero_bultos = 9;
+  repeated string indicadores = 10; // valores SUNAT_Envio_*
+  repeated Contenedor contenedores = 11;
+  PuertoAeropuerto puerto_aeropuerto = 12;
+  Transportista transportista = 13;
+  Parte subcontratador = 14;
+  Parte pagador_flete = 15;
+  repeated Vehiculo vehiculos = 16;
+  repeated Conductor conductores = 17;
+}
+
+message Medida {
+  double valor = 1;
+  string unidad = 2; // KGM, TNE, NIU, ...
+}
+
+message Contenedor {
+  string numero = 1;
+  string precinto = 2;
+}
+
+message PuertoAeropuerto {
+  string codigo = 1; // Catálogo 63 (puertos) o 64 (aeropuertos)
+  string tipo = 2;   // "1" puerto, "2" aeropuerto
+  string nombre = 3;
+}
+
+message Transportista {
+  string tipo_documento_identidad = 1;
+  string numero_documento = 2;
+  string nombre = 3;
+  string registro_mtc = 4;
+  AutorizacionEspecial autorizacion_especial = 5;
+}
+
+message Vehiculo {
+  string placa = 1;
+  string tuc = 2;
+  AutorizacionEspecial autorizacion_especial = 3;
+}
+
+message Conductor {
+  string tipo = 1; // "Principal" | "Secundario"
+  string tipo_documento_identidad = 2;
+  string numero_documento = 3;
+  string nombres = 4;
+  string apellidos = 5;
+  string licencia = 6;
+}
+
+message Direcciones {
+  Direccion partida = 1;
+  Direccion llegada = 2;
+}
+
+message Direccion {
+  string ubigeo = 1;        // Catálogo 13
+  string direccion = 2;
+  string ruc_asociado = 3;
+  string codigo_establecimiento = 4;
+  double latitud = 5;
+  double longitud = 6;
+}
+
+message Item {
+  int32 orden = 1;
+  string codigo = 2;
+  string descripcion = 3;
+  double cantidad = 4;
+  string unidad_medida = 5;
+  string codigo_producto_sunat = 6; // Catálogo 25
+  string gtin = 7;
+  repeated PropiedadItem propiedades = 8;
+}
+
+message PropiedadItem {
+  string codigo = 1;  // Catálogo 55 (7020..7028 en la GRE)
+  string nombre = 2;
+  string valor = 3;
+}
+
+// ---------------------------------------------------------------------------
+// Respuestas
+// ---------------------------------------------------------------------------
+
+message GreEmitida {
+  string id = 1;
+  TipoDocumentoGre tipo_documento = 2;
+  string ruc_emisor = 3;
+  string serie = 4;
+  int32 correlativo = 5;
+  string numero = 6;         // "T001-00000001"
+  EstadoGre estado = 7;
+  string hash_xml = 8;       // SHA-256 en hexadecimal
+  string nombre_archivo = 9; // "20100000000-09-T001-1.xml"
+  google.protobuf.Timestamp fecha_creacion = 10;
+  ResultadoValidacion validacion = 11;
+}
+
+message GreDetalle {
+  GreEmitida cabecera = 1;
+  SolicitudEmision solicitud = 2;
+  repeated Envio envios = 3;
+  repeated Violacion observaciones = 4;
+}
+
+message Violacion {
+  string item = 1;          // ítem de la hoja de validación de SUNAT
+  string tag_ubl = 2;
+  string codigo_retorno = 3;
+  TipoRetorno tipo_retorno = 4;
+  string mensaje = 5;
+}
+
+message ResultadoValidacion {
+  bool valido = 1;
+  repeated Violacion violations = 2;
+  repeated Violacion advertencias = 3;
+}
+
+message Envio {
+  string id = 1;
+  int32 intento = 2;
+  EstadoEnvio estado = 3;
+  google.protobuf.Timestamp fecha_envio = 4;
+  string codigo_retorno_sunat = 5;
+  string descripcion_respuesta = 6;
+  string ticket = 7;
+  bool cdr_disponible = 8;
+  Violacion violacion = 9;
+}
+
+message Cdr {
+  string id_gre = 1;
+  bytes contenido = 2;   // XML (o ZIP) con el CDR de SUNAT
+  string hash_cdr = 3;  // SHA-256 en hexadecimal
+  google.protobuf.Timestamp fecha_emision = 4;
+}
+
+// ---------------------------------------------------------------------------
+// Paginación y catálogos
+// ---------------------------------------------------------------------------
+
+message ListarGuiasRequest {
+  string ruc_emisor = 1;
+  TipoDocumentoGre tipo_documento = 2;
+  EstadoGre estado = 3;
+  string serie = 4;
+  string desde = 5;  // ISO-8601 (YYYY-MM-DD)
+  string hasta = 6;
+  int32 pagina = 7;   // base 0
+  int32 tamano = 8;   // por defecto 50, máximo 200
+}
+
+message PaginaGuias {
+  repeated GreEmitida contenido = 1;
+  int32 pagina = 2;
+  int32 tamano = 3;
+  int64 total_elementos = 4;
+  int32 total_paginas = 5;
+}
+
+message ValidarGuiaRequest {
+  SolicitudEmision solicitud = 1;
+}
+
+message ConsultarGuiaRequest {
+  string id = 1;
+}
+
+message EnviarGuiaRequest {
+  string id = 1;
+  bool sincrono = 2;   // false = encolado (por defecto)
+  string idempotency_key = 3;
+  string comentarios = 4;
+}
+
+message DescargarCdrRequest {
+  string id = 1;
+}
+
+message ListarCatalogosRequest {
+  string codigo = 1;   // vacío = todos los catálogos
+  int32 pagina = 2;
+  int32 tamano = 3;
+}
+
+message ListarCatalogosResponse {
+  repeated CatalogoItems contenido = 1;
+  int32 pagina = 2;
+  int32 tamano = 3;
+  int64 total_elementos = 4;
+  int32 total_paginas = 5;
+}
+
+message CatalogoItems {
+  string codigo = 1;    // "01", "20", "D-37"...
+  string nombre = 2;
+  string vigencia_desde = 3;
+  string vigencia_hasta = 4;
+  string fuente = 5;
+  repeated ItemCatalogo items = 6;
+}
+
+message ItemCatalogo {
+  string codigo = 1;
+  string nombre = 2;
+  map<string, string> atributos = 3; // columnas adicionales del catálogo
+}
